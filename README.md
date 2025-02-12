@@ -15,6 +15,7 @@ makanApa is a Telegram bot that facilitates food and item delivery within the In
 
     ```bash
     pip install python-telegram-bot
+    pip install python-dotenv
     ```
 
 2.  **Database Setup:**
@@ -27,8 +28,8 @@ makanApa is a Telegram bot that facilitates food and item delivery within the In
 3.  **Environment Variables:**
     Set the following environment variables:
 
-    *   `BOT_TOKEN`: The API token for your Telegram bot. You can obtain this from BotFather on Telegram.
-    *   `RUNNER_GROUP_ID`: The chat ID of the Telegram group where runners receive order notifications.
+*   `BOT_TOKEN`: The API token for your Telegram bot. You can obtain this from BotFather on Telegram. This should be placed in a `.env` file.
+*   `RUNNER_GROUP_ID`: The chat ID of the Telegram group where runners receive order notifications. This should be placed in a `.env` file.
 
 ## Usage
 

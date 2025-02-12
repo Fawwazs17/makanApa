@@ -12,6 +12,10 @@ from typing import Final
 from datetime import datetime
 import json
 import sqlite3
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Define states for the conversation
 (
@@ -26,8 +30,8 @@ import sqlite3
 ) = range(8)
 
 # Constants
-BOT_TOKEN: Final = '8030428695:AAFdN__4SqJFJMLfXYktL19CD41MsYfIcXQ'
-RUNNER_GROUP_ID: Final = '-1002344594546'
+BOT_TOKEN: Final = os.getenv('BOT_TOKEN')
+RUNNER_GROUP_ID: Final = os.getenv('RUNNER_GROUP_ID')
 ORDERS_FILE = 'data/order_counter.json'
 SISTER_MAHALLAHS = ["Safiyyah", "Ruqayyah", "Sumayyah", "Asiah", "Aminah", "Halimah", "Salahudin", "Maryam", "Nusaibah", "Hafsah"]
 BROTHER_MAHALLAHS = ["Zubair", "Ali", "Siddiq", "Uthman", "Farouq", "Bilal", "Salahudin"]
