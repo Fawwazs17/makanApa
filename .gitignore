@@ -1,1 +1,3 @@
-data/
+data/makanApa.db
+data/order_counter.json
+.env
