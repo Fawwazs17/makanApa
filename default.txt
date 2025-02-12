@@ -1,2 +1,0 @@
-lg2 config user.name 'Fawwaz'
-lg2 config user.email 'adamfawwazsazalizam@gmail.com'
