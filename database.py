@@ -52,6 +52,6 @@ def setup_database():
     order_counter_path = 'data/order_counter.json'
     if not os.path.exists(order_counter_path):
         with open(order_counter_path, 'w') as f:
-            json.dump({"order_count": 0}, f)
+            json.dump({"count": 0}, f)
 
 setup_database()
