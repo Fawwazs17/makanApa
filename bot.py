@@ -55,17 +55,30 @@ def get_next_counter():
     return counter["count"]
 
 # Start command handler
+import os
+import json
+
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.effective_user.id
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM Customers WHERE user_id=?", (user_id,))
-    customer = cursor.fetchone()
-    conn.close()
+    devlist_path = 'data/devlist.json'
+    
+    if os.path.exists(devlist_path):
+        with open(devlist_path, 'r') as f:
+            devlist = json.load(f)
+        
+        if user_id not in devlist:
+            await update.message.reply_text("You are not authorized to use this bot.")
+            return ConversationHandler.END
+    else:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM Customers WHERE user_id=?", (user_id,))
+        customer = cursor.fetchone()
+        conn.close()
 
-    if customer and customer['is_blocked']:
-        await update.message.reply_text("You have been blocked from using the service.")
-        return ConversationHandler.END
+        if customer and customer['is_blocked']:
+            await update.message.reply_text("You have been blocked from using the service.")
+            return ConversationHandler.END
 
     keyboard = [
         [InlineKeyboardButton("Food Delivery", callback_data='food')],
