@@ -11,11 +11,17 @@ makanApa is a Telegram bot that facilitates food and item delivery within the In
 ## Setup
 
 1.  **Dependencies:**
-    Install the required Python libraries:
+    Install the required Python libraries using the requirements file:
 
     ```bash
-    pip install python-telegram-bot
-    pip install python-dotenv
+    pip install -r requirements.txt
+    ```
+
+    We recommend using a virtual environment:
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # Linux/MacOS
+    .\venv\Scripts\activate  # Windows
     ```
 
 2.  **Database Setup:**
