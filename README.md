@@ -17,13 +17,6 @@ makanApa is a Telegram bot that facilitates food and item delivery within the In
     pip install -r requirements.txt
     ```
 
-    We recommend using a virtual environment:
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # Linux/MacOS
-    .\venv\Scripts\activate  # Windows
-    ```
-
 2.  **Database Setup:**
     Run the `database.py` file to set up the SQLite database:
 
