@@ -13,6 +13,17 @@ from datetime import datetime
 import json
 import sqlite3
 import os
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("data/bot.log"),
+        logging.StreamHandler()
+    ]
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -59,6 +70,7 @@ import os
 import json
 
 async def start(update: Update, context: CallbackContext) -> int:
+    logging.info(f"User {update.effective_user.id} started the bot.")
     user_id = update.effective_user.id
     devlist_path = 'data/devlist.json'
     
@@ -67,6 +79,7 @@ async def start(update: Update, context: CallbackContext) -> int:
             devlist = json.load(f)
         
         if user_id not in devlist:
+            logging.warning(f"User {user_id} is not authorized to use the bot.")
             await update.message.reply_text("You are not authorized to use this bot.")
             return ConversationHandler.END
     else:
@@ -77,9 +90,11 @@ async def start(update: Update, context: CallbackContext) -> int:
         conn.close()
 
         if customer and customer['is_blocked']:
+            logging.warning(f"User {user_id} is blocked from using the service.")
             await update.message.reply_text("You have been blocked from using the service.")
             return ConversationHandler.END
 
+    logging.info(f"User {user_id} is authorized to use the bot.")
     keyboard = [
         [InlineKeyboardButton("Food Delivery", callback_data='food')],
         [InlineKeyboardButton("Item Delivery", callback_data='item')]
