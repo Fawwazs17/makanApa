@@ -17,6 +17,10 @@ import logging
 
 
 # Configure logging
+class NoHttpRequestFilter(logging.Filter):
+    def filter(self, record):
+        return not record.getMessage().startswith("HTTP Request:")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -27,6 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__) # Get logger instance
 logger.setLevel(logging.DEBUG) # Set logger level to DEBUG to capture debug logs as well
+logger.addFilter(NoHttpRequestFilter()) # Add filter to logger
 
 from dotenv import load_dotenv
 
@@ -102,15 +107,18 @@ async def start(update: Update, context: CallbackContext) -> int:
 
     logger.info(f"User {user_id} is authorized to use the bot.")
     keyboard = [
-        [InlineKeyboardButton("Food Delivery", callback_data='food')],
-        [InlineKeyboardButton("Item Delivery", callback_data='item')]
+        [InlineKeyboardButton("🍔 Food Delivery", callback_data='food'),
+         InlineKeyboardButton("📦 Item Delivery", callback_data='item')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Welcome to makanApa the IIUM e-Hailing Bot! Please choose your delivery type:",
-        reply_markup=reply_markup
+        "👋 Welcome to *makanApa Bot*! Your go-to e-hailing service within IIUM.\n\n"
+        "Need something delivered? Choose a service below:",
+        reply_markup=reply_markup,
+        parse_mode="Markdown" # Enable Markdown for formatting
     )
     return CHOOSING_SERVICE
+
 
 # Choose delivery type handler
 async def choose_delivery(update: Update, context: CallbackContext) -> int:
@@ -280,7 +288,7 @@ async def handle_confirmation(update: Update, context: CallbackContext) -> int:
 
         # Generate order ID with timestamp and counter
         counter = get_next_counter()
-        order_id = f"ORDER_{datetime.now().strftime('%y%m%d_%H%M%S')}_{counter}"
+        order_id = f"{datetime.now().strftime('%y%m%d_%H%M%S')}_{counter}"
         logger.info(f"Order ID generated: {order_id} for user {user_id}")
 
         # Insert order into database
@@ -315,15 +323,12 @@ async def handle_confirmation(update: Update, context: CallbackContext) -> int:
 
             # Notify customer and keep order details visible
             message = await query.edit_message_text(
-                f"✅ Your order has been posted to runners! "
-                "You will be notified when a runner accepts your order.\n\n"
-                f"📋 Order Summary:\n"
+                f"🔎Finding the best runner for you!\nYou will be notified when a runner accepts your order\n\n"
                 f"Order ID: #{order_id}\n"
                 f"Delivery Type: {order_data['delivery_type'].capitalize()}\n"
                 f"From: {order_data['from_location']}\n"
-                f"To: {order_data['to_location']}\n"
-                f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                "If you want to cancel the order, click the button below.",
+                f"To: {order_data['to_location']}\n\n"
+                f"If you want to cancel the order, click the button below.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("❌ Cancel Order", callback_data=f"cancel_{order_id}")]
                 ])
