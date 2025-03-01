@@ -24,6 +24,9 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+logger = logging.getLogger(__name__) # Get logger instance
+logger.setLevel(logging.DEBUG) # Set logger level to DEBUG to capture debug logs as well
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -55,12 +58,14 @@ def get_db_connection():
 
 # Get next order counter
 def get_next_counter():
+    logger.debug(f"Reading order counter from {ORDERS_FILE}")
     try:
         with open(ORDERS_FILE, 'r') as f:
             counter = json.load(f)
     except FileNotFoundError:
         counter = {"count": 0}
     counter["count"] += 1
+    logger.debug(f"Writing updated order counter to {ORDERS_FILE}: {counter}")
     with open(ORDERS_FILE, 'w') as f:
         json.dump(counter, f)
     return counter["count"]
@@ -70,16 +75,16 @@ import os
 import json
 
 async def start(update: Update, context: CallbackContext) -> int:
-    logging.info(f"User {update.effective_user.id} started the bot.")
     user_id = update.effective_user.id
+    logger.info(f"User {user_id} started the bot.")
     devlist_path = 'data/devlist.json'
-    
+
     if os.path.exists(devlist_path):
         with open(devlist_path, 'r') as f:
             devlist = json.load(f)
-        
+
         if user_id not in devlist:
-            logging.warning(f"User {user_id} is not authorized to use the bot.")
+            logger.warning(f"User {user_id} is not authorized to use the bot.")
             await update.message.reply_text("You are not authorized to use this bot.")
             return ConversationHandler.END
     else:
@@ -90,11 +95,11 @@ async def start(update: Update, context: CallbackContext) -> int:
         conn.close()
 
         if customer and customer['is_blocked']:
-            logging.warning(f"User {user_id} is blocked from using the service.")
+            logger.warning(f"User {user_id} is blocked from using the service.")
             await update.message.reply_text("You have been blocked from using the service.")
             return ConversationHandler.END
 
-    logging.info(f"User {user_id} is authorized to use the bot.")
+    logger.info(f"User {user_id} is authorized to use the bot.")
     keyboard = [
         [InlineKeyboardButton("Food Delivery", callback_data='food')],
         [InlineKeyboardButton("Item Delivery", callback_data='item')]
@@ -110,7 +115,9 @@ async def start(update: Update, context: CallbackContext) -> int:
 async def choose_delivery(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
-    context.user_data['delivery_type'] = query.data
+    delivery_type = query.data
+    context.user_data['delivery_type'] = delivery_type
+    logger.info(f"User {query.from_user.id} chose delivery type: {delivery_type}")
 
     keyboard = [
         [InlineKeyboardButton("Sister Mahallah", callback_data='sister')],
@@ -132,6 +139,7 @@ async def choose_from_category(update: Update, context: CallbackContext) -> int:
     await query.answer()
     category = query.data
     context.user_data['from_category'] = category
+    logger.info(f"User {query.from_user.id} chose pickup category: {category}")
 
     if category in ['sister', 'brother']:
         mahallahs = SISTER_MAHALLAHS if category == 'sister' else BROTHER_MAHALLAHS
@@ -152,6 +160,7 @@ async def handle_from_mahallah(update: Update, context: CallbackContext) -> int:
     await query.answer()
     mahallah = query.data.replace('from_', '')
     context.user_data['from_location'] = mahallah
+    logger.info(f"User {query.from_user.id} chose pickup mahallah: {mahallah}")
 
     keyboard = [
         [InlineKeyboardButton("Sister Mahallah", callback_data='to_sister')],
@@ -165,7 +174,9 @@ async def handle_from_mahallah(update: Update, context: CallbackContext) -> int:
 
 # Handle custom typed pickup location
 async def handle_custom_from_location(update: Update, context: CallbackContext) -> int:
-    context.user_data['from_location'] = update.message.text
+    from_location = update.message.text
+    context.user_data['from_location'] = from_location
+    logger.info(f"User {update.effective_user.id} typed pickup location: {from_location}")
 
     keyboard = [
         [InlineKeyboardButton("Sister Mahallah", callback_data='to_sister')],
@@ -183,6 +194,7 @@ async def choose_to_category(update: Update, context: CallbackContext) -> int:
     await query.answer()
     category = query.data.replace('to_', '')
     context.user_data['to_category'] = category
+    logger.info(f"User {query.from_user.id} chose delivery category: {category}")
 
     if category in ['sister', 'brother']:
         mahallahs = SISTER_MAHALLAHS if category == 'sister' else BROTHER_MAHALLAHS
@@ -207,12 +219,15 @@ async def handle_to_mahallah(update: Update, context: CallbackContext) -> int:
     await query.answer()
     mahallah = query.data.replace('to_', '')
     context.user_data['to_location'] = mahallah
+    logger.info(f"User {query.from_user.id} chose delivery mahallah: {mahallah}")
     await display_order_summary(query, context)
     return CONFIRMING_ORDER
 
 # Handle custom typed delivery location
 async def handle_custom_to_location(update: Update, context: CallbackContext) -> int:
-    context.user_data['to_location'] = update.message.text
+    to_location = update.message.text
+    context.user_data['to_location'] = to_location
+    logger.info(f"User {update.effective_user.id} typed delivery location: {to_location}")
     await display_order_summary(update, context)
     return CONFIRMING_ORDER
 
@@ -252,6 +267,7 @@ async def handle_confirmation(update: Update, context: CallbackContext) -> int:
         customer = cursor.fetchone()
         if not customer:
             cursor.execute("INSERT INTO Customers (user_id, username) VALUES (?, ?)", (user_id, username))
+            logger.debug(f"New customer inserted: user_id={user_id}, username={username}")
         conn.commit()
 
         order_data = {
@@ -264,6 +280,7 @@ async def handle_confirmation(update: Update, context: CallbackContext) -> int:
         # Generate order ID with timestamp and counter
         counter = get_next_counter()
         order_id = f"ORDER_{datetime.now().strftime('%y%m%d_%H%M%S')}_{counter}"
+        logger.info(f"Order ID generated: {order_id} for user {user_id}")
 
         # Insert order into database
         cursor.execute('''
@@ -271,6 +288,7 @@ async def handle_confirmation(update: Update, context: CallbackContext) -> int:
             VALUES (?, ?, ?, ?, ?)
         ''', (order_id, order_data['customer_id'], order_data['delivery_type'], order_data['from_location'], order_data['to_location']))
         conn.commit()
+        logger.debug(f"New order inserted: order_id={order_id}, customer_id={order_data['customer_id']}")
 
         # Create message for runner group
         runner_message = (
@@ -292,6 +310,7 @@ async def handle_confirmation(update: Update, context: CallbackContext) -> int:
                 text=runner_message,
                 reply_markup=reply_markup
             )
+            logger.info(f"Order ID: {order_id} sent to runner group.")
 
             # Notify customer and keep order details visible
             message = await query.edit_message_text(
@@ -317,15 +336,17 @@ async def handle_confirmation(update: Update, context: CallbackContext) -> int:
             ''', (message.message_id, runner_message_obj.message_id, order_id))
             conn.commit()
         except Exception as e:
-            print(f"Error sending to runner group: {e}")
+            logger.error(f"Error sending order ID: {order_id} to runner group: {e}")
             await query.edit_message_text(
                 "There was an error posting your order to runners. "
                 "Please try again or contact support."
             )
         finally:
             conn.close()
+        logger.info(f"User {query.from_user.id} confirmed order. Order ID: {order_id}")
     else:
         await query.edit_message_text("Order cancelled. Type /start to create a new order.")
+        logger.info(f"User {query.from_user.id} cancelled order before confirmation.")
     return ConversationHandler.END
 
 # Handle order cancellation by the user
@@ -337,9 +358,9 @@ async def handle_cancellation(update: Update, context: CallbackContext) -> None:
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT Orders.*, Customers.username 
-        FROM Orders 
-        JOIN Customers ON Orders.customer_id = Customers.user_id 
+        SELECT Orders.*, Customers.username
+        FROM Orders
+        JOIN Customers ON Orders.customer_id = Customers.user_id
         WHERE Orders.id=?
     ''', (order_id,))
     order = cursor.fetchone()
@@ -351,8 +372,10 @@ async def handle_cancellation(update: Update, context: CallbackContext) -> None:
             WHERE id = ?
         ''', (datetime.now().isoformat(), order_id))
         conn.commit()
+        logger.debug(f"Order ID: {order_id} status updated to cancelled.")
 
         await query.edit_message_text("Your order has been cancelled.")
+        logger.info(f"User {query.from_user.id} cancelled order ID: {order_id}")
 
         # Edit the original runner group message to indicate cancellation and remove the accept button
         await context.bot.edit_message_text(
@@ -369,6 +392,7 @@ async def handle_cancellation(update: Update, context: CallbackContext) -> None:
         )
     else:
         await query.edit_message_text("This order cannot be cancelled.")
+        logger.warning(f"User {query.from_user.id} tried to cancel order ID: {order_id}, but it was not pending or not found.")
     conn.close()
 
 # Handle when a runner accepts an order
@@ -377,13 +401,14 @@ async def handle_runner_acceptance(update: Update, context: CallbackContext) -> 
     await query.answer()
     order_id = query.data.replace('accept_', '')
     runner = update.effective_user
+    logger.info(f"Runner {runner.id} (@{runner.username}) attempting to accept order ID: {order_id}")
 
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT Orders.*, Customers.username 
-        FROM Orders 
-        JOIN Customers ON Orders.customer_id = Customers.user_id 
+        SELECT Orders.*, Customers.username
+        FROM Orders
+        JOIN Customers ON Orders.customer_id = Customers.user_id
         WHERE Orders.id=?
     ''', (order_id,))
     order = cursor.fetchone()
@@ -396,13 +421,15 @@ async def handle_runner_acceptance(update: Update, context: CallbackContext) -> 
             WHERE id = ?
         ''', (runner.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), order_id))
         conn.commit()
+        logger.debug(f"Order ID: {order_id} status updated to accepted, runner_id={runner.id}")
 
         # Check if runner is already in the database
         cursor.execute("SELECT * FROM Runners WHERE user_id=?", (runner.id,))
         runner_record = cursor.fetchone()
         if not runner_record:
             cursor.execute("INSERT INTO Runners (user_id, username) VALUES (?, ?)", (runner.id, runner.username))
-        conn.commit()
+            conn.commit()
+        logger.debug(f"New runner inserted: user_id={runner.id}, username={runner.username}")
 
         # Update runner group message
         runner_message = (
@@ -442,17 +469,20 @@ async def handle_runner_acceptance(update: Update, context: CallbackContext) -> 
                  f"Customer's username: @{customer_username}\n"
                  f"Please contact the customer for further details."
         )
+        logger.info(f"Runner {runner.id} (@{runner.username}) successfully accepted order ID: {order_id}")
     else:
         await query.edit_message_text(
             f"{query.message.text}\n\n"
             "❌ This order is no longer available.",
             reply_markup=None
         )
+        logger.warning(f"Runner {runner.id} (@{runner.username}) tried to accept order ID: {order_id}, but it was not pending or not found.")
     conn.close()
 
 # Cancel command handler
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Order cancelled. Type /start to create a new order.")
+    logger.info(f"User {update.effective_user.id} cancelled order using /cancel command.")
     return ConversationHandler.END
 
 # Main function to set up and run the bot
