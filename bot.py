@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -101,10 +101,10 @@ async def start(update: Update, context: CallbackContext) -> int:
 
     logger.info(f"User {user_id} is authorized to use the bot.")
     keyboard = [
-        [InlineKeyboardButton("Food Delivery", callback_data='food')],
-        [InlineKeyboardButton("Item Delivery", callback_data='item')]
+        [KeyboardButton("Food Delivery")],
+        [KeyboardButton("Item Delivery")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     await update.message.reply_text(
         "Welcome to makanApa the IIUM e-Hailing Bot! Please choose your delivery type:",
         reply_markup=reply_markup
@@ -113,20 +113,18 @@ async def start(update: Update, context: CallbackContext) -> int:
 
 # Choose delivery type handler
 async def choose_delivery(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    delivery_type = query.data
-    context.user_data['delivery_type'] = delivery_type
-    logger.info(f"User {query.from_user.id} chose delivery type: {delivery_type}")
+    delivery_type = update.message.text # Get text from message instead of callback_query
+    context.user_data['delivery_type'] = delivery_type.lower() # Store in lowercase for consistency
+    logger.info(f"User {update.effective_user.id} chose delivery type: {delivery_type}")
 
     keyboard = [
-        [InlineKeyboardButton("Sister Mahallah", callback_data='sister')],
-        [InlineKeyboardButton("Brother Mahallah", callback_data='brother')],
-        [InlineKeyboardButton("In UIA", callback_data='in_uia')],
-        [InlineKeyboardButton("Outside UIA", callback_data='outside_uia')]
+        [KeyboardButton("Sister Mahallah")],
+        [KeyboardButton("Brother Mahallah")],
+        [KeyboardButton("In UIA")],
+        [KeyboardButton("Outside UIA")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True) # ReplyKeyboardMarkup instead of InlineKeyboardMarkup
+    await update.message.reply_text( # Use reply_text instead of edit_message_text
         "Please choose the PICKUP location:",
         parse_mode="HTML",
         reply_markup=reply_markup
@@ -135,20 +133,18 @@ async def choose_delivery(update: Update, context: CallbackContext) -> int:
 
 # Choose from location category handler
 async def choose_from_category(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    category = query.data
+    category = update.message.text.lower().replace(" ", "_") # Get text from message, handle spaces and lowercase
     context.user_data['from_category'] = category
-    logger.info(f"User {query.from_user.id} chose pickup category: {category}")
+    logger.info(f"User {update.effective_user.id} chose pickup category: {category}")
 
-    if category in ['sister', 'brother']:
-        mahallahs = SISTER_MAHALLAHS if category == 'sister' else BROTHER_MAHALLAHS
-        keyboard = [[InlineKeyboardButton(name, callback_data=f"from_{name}")] for name in mahallahs]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("Please choose the specific Mahallah:", reply_markup=reply_markup)
+    if category in ['sister_mahallah', 'brother_mahallah']: # Match against the lowercased, space-removed category
+        mahallahs = SISTER_MAHALLAHS if category == 'sister_mahallah' else BROTHER_MAHALLAHS # Correct category matching
+        keyboard = [[KeyboardButton(name)] for name in mahallahs]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True) # ReplyKeyboardMarkup
+        await update.message.reply_text("Please choose the specific Mahallah:", reply_markup=reply_markup) # reply_text
         return CHOOSING_FROM_MAHALLAH
     else:
-        await query.edit_message_text(
+        await update.message.reply_text( # reply_text
             "Please type the PICKUP location:",
             parse_mode="HTML"
         )
@@ -156,20 +152,18 @@ async def choose_from_category(update: Update, context: CallbackContext) -> int:
 
 # Handle specific mahallah selection for pickup
 async def handle_from_mahallah(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    mahallah = query.data.replace('from_', '')
+    mahallah = update.message.text # Get mahallah from message text
     context.user_data['from_location'] = mahallah
-    logger.info(f"User {query.from_user.id} chose pickup mahallah: {mahallah}")
+    logger.info(f"User {update.effective_user.id} chose pickup mahallah: {mahallah}")
 
     keyboard = [
-        [InlineKeyboardButton("Sister Mahallah", callback_data='to_sister')],
-        [InlineKeyboardButton("Brother Mahallah", callback_data='to_brother')],
-        [InlineKeyboardButton("In UIA", callback_data='to_in_uia')],
-        [InlineKeyboardButton("Outside UIA", callback_data='to_outside_uia')]
+        [KeyboardButton("Sister Mahallah")],
+        [KeyboardButton("Brother Mahallah")],
+        [KeyboardButton("In UIA")],
+        [KeyboardButton("Outside UIA")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("Please choose the DELIVERY location:", parse_mode="HTML", reply_markup=reply_markup)
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True) # ReplyKeyboardMarkup
+    await update.message.reply_text("Please choose the DELIVERY location:", parse_mode="HTML", reply_markup=reply_markup) # reply_text
     return CHOOSING_TO_CATEGORY
 
 # Handle custom typed pickup location
@@ -179,35 +173,33 @@ async def handle_custom_from_location(update: Update, context: CallbackContext) 
     logger.info(f"User {update.effective_user.id} typed pickup location: {from_location}")
 
     keyboard = [
-        [InlineKeyboardButton("Sister Mahallah", callback_data='to_sister')],
-        [InlineKeyboardButton("Brother Mahallah", callback_data='to_brother')],
-        [InlineKeyboardButton("In UIA", callback_data='to_in_uia')],
-        [InlineKeyboardButton("Outside UIA", callback_data='to_outside_uia')]
+        [KeyboardButton("Sister Mahallah")],
+        [KeyboardButton("Brother Mahallah")],
+        [KeyboardButton("In UIA")],
+        [KeyboardButton("Outside UIA")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Please choose the DELIVERY location:", parse_mode="HTML", reply_markup=reply_markup)
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True) # ReplyKeyboardMarkup
+    await update.message.reply_text("Please choose the DELIVERY location:", parse_mode="HTML", reply_markup=reply_markup) # reply_text
     return CHOOSING_TO_CATEGORY
 
 # Choose to location category handler
 async def choose_to_category(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    category = query.data.replace('to_', '')
+    category = update.message.text.lower().replace(" ", "_") # Get text from message, handle spaces and lowercase
     context.user_data['to_category'] = category
-    logger.info(f"User {query.from_user.id} chose delivery category: {category}")
+    logger.info(f"User {update.effective_user.id} chose delivery category: {category}")
 
-    if category in ['sister', 'brother']:
-        mahallahs = SISTER_MAHALLAHS if category == 'sister' else BROTHER_MAHALLAHS
-        keyboard = [[InlineKeyboardButton(name, callback_data=f"to_{name}")] for name in mahallahs]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
+    if category in ['sister_mahallah', 'brother_mahallah']: # Correct category matching
+        mahallahs = SISTER_MAHALLAHS if category == 'sister_mahallah' else BROTHER_MAHALLAHS # Correct category matching
+        keyboard = [[KeyboardButton(name)] for name in mahallahs]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True) # ReplyKeyboardMarkup
+        await update.message.reply_text( # reply_text
             "Please choose the specific DELIVERY Mahallah:",
             parse_mode="HTML",
             reply_markup=reply_markup
         )
         return CHOOSING_TO_MAHALLAH
     else:
-        await query.edit_message_text(
+        await update.message.reply_text( # reply_text
             "Please type the DELIVERY location:",
             parse_mode="HTML"
         )
@@ -215,12 +207,10 @@ async def choose_to_category(update: Update, context: CallbackContext) -> int:
 
 # Handle specific mahallah selection for delivery
 async def handle_to_mahallah(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    mahallah = query.data.replace('to_', '')
+    mahallah = update.message.text # Get mahallah from message text
     context.user_data['to_location'] = mahallah
-    logger.info(f"User {query.from_user.id} chose delivery mahallah: {mahallah}")
-    await display_order_summary(query, context)
+    logger.info(f"User {update.effective_user.id} chose delivery mahallah: {mahallah}")
+    await display_order_summary(update, context) # Pass update instead of query
     return CONFIRMING_ORDER
 
 # Handle custom typed delivery location
@@ -228,11 +218,11 @@ async def handle_custom_to_location(update: Update, context: CallbackContext) ->
     to_location = update.message.text
     context.user_data['to_location'] = to_location
     logger.info(f"User {update.effective_user.id} typed delivery location: {to_location}")
-    await display_order_summary(update, context)
+    await display_order_summary(update, context) # Pass update instead of query
     return CONFIRMING_ORDER
 
 # Display order summary and confirmation buttons
-async def display_order_summary(update: Update, context: CallbackContext) -> None:
+async def display_order_summary(update: Update, context: CallbackContext) -> None: # Expecting Update now
     summary = (
         "📋 Order Summary:\n"
         f"Delivery Type: {context.user_data['delivery_type'].capitalize()}\n"
@@ -247,10 +237,8 @@ async def display_order_summary(update: Update, context: CallbackContext) -> Non
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    if isinstance(update, Update):
-        await update.message.reply_text(summary, reply_markup=reply_markup)
-    else:  # CallbackQuery
-        await update.edit_message_text(summary, reply_markup=reply_markup)
+    await update.message.reply_text(summary, reply_markup=reply_markup) # Use reply_text as it might be called from message handler
+
 
 # Handle order confirmation and post to runner group
 async def handle_confirmation(update: Update, context: CallbackContext) -> int:
@@ -333,7 +321,7 @@ async def handle_confirmation(update: Update, context: CallbackContext) -> int:
                 UPDATE Orders
                 SET customer_message_id = ?, runner_message_id = ?
                 WHERE id = ?
-            ''', (message.message_id, runner_message_obj.message_id, order_id))
+            ''', (message.message_id, runner_message_obj.message_id, order_id)) # message is from previous scope, should be query.message
             conn.commit()
         except Exception as e:
             logger.error(f"Error sending order ID: {order_id} to runner group: {e}")
@@ -481,7 +469,7 @@ async def handle_runner_acceptance(update: Update, context: CallbackContext) -> 
 
 # Cancel command handler
 async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Order cancelled. Type /start to create a new order.")
+    await update.message.reply_text("Order cancelled. Type /start to create a new order.", reply_markup=ReplyKeyboardMarkup.from_button(KeyboardButton(text="/start"), resize_keyboard=True, one_time_keyboard=True)) # Added /start button to keyboard
     logger.info(f"User {update.effective_user.id} cancelled order using /cancel command.")
     return ConversationHandler.END
 
@@ -494,22 +482,22 @@ def main() -> None:
         entry_points=[CommandHandler('start', start)],
         states={
             CHOOSING_SERVICE: [
-                CallbackQueryHandler(choose_delivery, pattern='^(food|item)$')
+                MessageHandler(filters.TEXT & ~filters.COMMAND, choose_delivery) # Changed to MessageHandler
             ],
             CHOOSING_FROM_CATEGORY: [
-                CallbackQueryHandler(choose_from_category, pattern='^(sister|brother|in_uia|outside_uia)$')
+                MessageHandler(filters.TEXT & ~filters.COMMAND, choose_from_category) # Changed to MessageHandler
             ],
             CHOOSING_FROM_MAHALLAH: [
-                CallbackQueryHandler(handle_from_mahallah, pattern='^from_')
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_from_mahallah) # Changed to MessageHandler
             ],
             TYPING_FROM_LOCATION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_from_location)
             ],
             CHOOSING_TO_CATEGORY: [
-                CallbackQueryHandler(choose_to_category, pattern='^to_')
+                MessageHandler(filters.TEXT & ~filters.COMMAND, choose_to_category) # Changed to MessageHandler
             ],
             CHOOSING_TO_MAHALLAH: [
-                CallbackQueryHandler(handle_to_mahallah, pattern='^to_')
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_to_mahallah) # Changed to MessageHandler
             ],
             TYPING_TO_LOCATION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_to_location)
