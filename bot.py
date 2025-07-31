@@ -6,31 +6,27 @@ from telegram.ext import (
     MessageHandler,
     filters,
     CallbackContext,
-    ConversationHandler
+    ConversationHandler,
 )
 from typing import Final
 from datetime import datetime
-import json
-import sqlite3
 import os
 import logging
+from dotenv import load_dotenv
+from database import get_db_connection
+import psycopg2.extras
 
+# Load environment variables
+load_dotenv()
 
-# Configure logging
+# Configure logging for a serverless environment
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("data/bot.log"),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger(__name__) # Get logger instance
-logger.setLevel(logging.DEBUG) # Set logger level to DEBUG to capture debug logs as well
-
-from dotenv import load_dotenv
-
-load_dotenv()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # Define states for the conversation
 (
@@ -41,64 +37,44 @@ load_dotenv()
     CHOOSING_TO_CATEGORY,
     CHOOSING_TO_MAHALLAH,
     TYPING_TO_LOCATION,
-    CONFIRMING_ORDER
+    CONFIRMING_ORDER,
 ) = range(8)
 
 # Constants
 BOT_TOKEN: Final = os.getenv('BOT_TOKEN')
 RUNNER_GROUP_ID: Final = os.getenv('RUNNER_GROUP_ID')
-ORDERS_FILE = 'data/order_counter.json'
 SISTER_MAHALLAHS = ["Safiyyah", "Ruqayyah", "Sumayyah", "Asiah", "Aminah", "Halimah", "Salahudin", "Maryam", "Nusaibah", "Hafsah"]
 BROTHER_MAHALLAHS = ["Zubair", "Ali", "Siddiq", "Uthman", "Farouq", "Bilal", "Salahudin"]
 
-# Database connection
-def get_db_connection():
-    conn = sqlite3.connect('data/makanApa.db')
-    conn.row_factory = sqlite3.Row
-    return conn
-
-# Get next order counter
-def get_next_counter():
-    logger.debug(f"Reading order counter from {ORDERS_FILE}")
-    try:
-        with open(ORDERS_FILE, 'r') as f:
-            counter = json.load(f)
-    except FileNotFoundError:
-        counter = {"count": 0}
-    counter["count"] += 1
-    logger.debug(f"Writing updated order counter to {ORDERS_FILE}: {counter}")
-    with open(ORDERS_FILE, 'w') as f:
-        json.dump(counter, f)
-    return counter["count"]
+# Get next order counter from PostgreSQL sequence
+def get_next_counter(cursor):
+    logger.debug("Fetching next order counter from sequence.")
+    cursor.execute("SELECT nextval('order_id_seq')")
+    return cursor.fetchone()[0]
 
 # Start command handler
-import os
-import json
-
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.effective_user.id
     logger.info(f"User {user_id} started the bot.")
-    devlist_path = 'data/devlist.json'
 
-    if os.path.exists(devlist_path):
-        with open(devlist_path, 'r') as f:
-            devlist = json.load(f)
-
-        if user_id not in devlist:
-            logger.warning(f"User {user_id} is not authorized to use the bot.")
-            await update.message.reply_text("You are not authorized to use this bot.")
-            return ConversationHandler.END
-    else:
+    conn = None
+    try:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM Customers WHERE user_id=?", (user_id,))
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cursor.execute("SELECT * FROM Customers WHERE user_id=%s", (user_id,))
         customer = cursor.fetchone()
-        conn.close()
 
         if customer and customer['is_blocked']:
             logger.warning(f"User {user_id} is blocked from using the service.")
             await update.message.reply_text("You have been blocked from using the service.")
             return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Database error in start handler for user {user_id}: {e}")
+        await update.message.reply_text("There was an error. Please try again later.")
+        return ConversationHandler.END
+    finally:
+        if conn:
+            conn.close()
 
     logger.info(f"User {user_id} is authorized to use the bot.")
     keyboard = [
@@ -257,97 +233,102 @@ async def display_order_summary(update: Update, context: CallbackContext) -> Non
 async def handle_confirmation(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
-    if query.data == 'confirm':
-        user_id = update.effective_user.id
-        username = update.effective_user.username
 
-        # Check if customer is already in the database
+    if query.data != 'confirm':
+        await query.edit_message_text("Order cancelled. Type /start to create a new order.")
+        logger.info(f"User {query.from_user.id} cancelled order before confirmation.")
+        return ConversationHandler.END
+
+    user_id = update.effective_user.id
+    username = update.effective_user.username
+    conn = None
+
+    try:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM Customers WHERE user_id=?", (user_id,))
-        customer = cursor.fetchone()
-        if not customer:
-            cursor.execute("INSERT INTO Customers (user_id, username) VALUES (?, ?)", (user_id, username))
-            logger.debug(f"New customer inserted: user_id={user_id}, username={username}")
-        conn.commit()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
+        # Upsert customer
+        cursor.execute(
+            "INSERT INTO Customers (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET username = %s",
+            (user_id, username, username)
+        )
+        logger.debug(f"Customer upserted: user_id={user_id}, username={username}")
+
+        # Generate order ID
+        counter = get_next_counter(cursor)
+        order_id = f"ORDER_{datetime.now().strftime('%y%m%d_%H%M%S')}_{counter}"
+        logger.info(f"Order ID generated: {order_id} for user {user_id}")
+
+        # Insert order into database
         order_data = {
+            "id": order_id,
             "customer_id": user_id,
             "delivery_type": context.user_data['delivery_type'],
             "from_location": context.user_data['from_location'],
             "to_location": context.user_data['to_location']
         }
-
-        # Generate order ID with timestamp and counter
-        counter = get_next_counter()
-        order_id = f"ORDER_{datetime.now().strftime('%y%m%d_%H%M%S')}_{counter}"
-        logger.info(f"Order ID generated: {order_id} for user {user_id}")
-
-        # Insert order into database
-        cursor.execute('''
-            INSERT INTO Orders (id, customer_id, delivery_type, from_location, to_location)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (order_id, order_data['customer_id'], order_data['delivery_type'], order_data['from_location'], order_data['to_location']))
-        conn.commit()
-        logger.debug(f"New order inserted: order_id={order_id}, customer_id={order_data['customer_id']}")
+        cursor.execute(
+            "INSERT INTO Orders (id, customer_id, delivery_type, from_location, to_location) VALUES (%(id)s, %(customer_id)s, %(delivery_type)s, %(from_location)s, %(to_location)s)",
+            order_data
+        )
+        logger.debug(f"New order inserted: {order_data}")
 
         # Create message for runner group
-        runner_message = (
+        runner_message_text = (
             f"🆕 New Order #{order_id}\n\n"
             f"Type  : {order_data['delivery_type'].capitalize()}\n"
             f"From : {order_data['from_location']}\n"
             f"To      : {order_data['to_location']}\n"
             f"Time : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("Accept Order", callback_data=f"accept_{order_id}")]])
 
-        # Create accept button for runners
-        keyboard = [[InlineKeyboardButton("Accept Order", callback_data=f"accept_{order_id}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        # Send to runner group
+        runner_message_obj = await context.bot.send_message(
+            chat_id=RUNNER_GROUP_ID,
+            text=runner_message_text,
+            reply_markup=reply_markup
+        )
+        logger.info(f"Order ID: {order_id} sent to runner group.")
 
-        try:
-            # Send to runner group and get the message object
-            runner_message_obj = await context.bot.send_message(
-                chat_id=RUNNER_GROUP_ID,
-                text=runner_message,
-                reply_markup=reply_markup
-            )
-            logger.info(f"Order ID: {order_id} sent to runner group.")
+        # Notify customer
+        customer_message_text = (
+            f"✅ Your order has been posted to runners! "
+            "You will be notified when a runner accepts your order.\n\n"
+            f"📋 Order Summary:\n"
+            f"Order ID: #{order_id}\n"
+            f"Delivery Type: {order_data['delivery_type'].capitalize()}\n"
+            f"From: {context.user_data['from_location']}\n"
+            f"To: {context.user_data['to_location']}\n"
+            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            "If you want to cancel the order, click the button below."
+        )
+        customer_reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Order", callback_data=f"cancel_{order_id}")]])
+        message = await query.edit_message_text(
+            customer_message_text,
+            reply_markup=customer_reply_markup
+        )
 
-            # Notify customer and keep order details visible
-            message = await query.edit_message_text(
-                f"✅ Your order has been posted to runners! "
-                "You will be notified when a runner accepts your order.\n\n"
-                f"📋 Order Summary:\n"
-                f"Order ID: #{order_id}\n"
-                f"Delivery Type: {order_data['delivery_type'].capitalize()}\n"
-                f"From: {order_data['from_location']}\n"
-                f"To: {order_data['to_location']}\n"
-                f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                "If you want to cancel the order, click the button below.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ Cancel Order", callback_data=f"cancel_{order_id}")]
-                ])
-            )
+        # Update order with message IDs
+        cursor.execute(
+            "UPDATE Orders SET customer_message_id = %s, runner_message_id = %s WHERE id = %s",
+            (message.message_id, runner_message_obj.message_id, order_id)
+        )
 
-            # Update order with message IDs
-            cursor.execute('''
-                UPDATE Orders
-                SET customer_message_id = ?, runner_message_id = ?
-                WHERE id = ?
-            ''', (message.message_id, runner_message_obj.message_id, order_id))
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Error sending order ID: {order_id} to runner group: {e}")
-            await query.edit_message_text(
-                "There was an error posting your order to runners. "
-                "Please try again or contact support."
-            )
-        finally:
-            conn.close()
+        conn.commit()
         logger.info(f"User {query.from_user.id} confirmed order. Order ID: {order_id}")
-    else:
-        await query.edit_message_text("Order cancelled. Type /start to create a new order.")
-        logger.info(f"User {query.from_user.id} cancelled order before confirmation.")
+
+    except Exception as e:
+        logger.error(f"Error during order confirmation for user {user_id}: {e}")
+        if conn:
+            conn.rollback()
+        await query.edit_message_text(
+            "There was an error posting your order. Please try again or contact support."
+        )
+    finally:
+        if conn:
+            conn.close()
+
     return ConversationHandler.END
 
 # Handle order cancellation by the user
@@ -355,46 +336,53 @@ async def handle_cancellation(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
     order_id = query.data.replace('cancel_', '')
+    conn = None
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT Orders.*, Customers.username
-        FROM Orders
-        JOIN Customers ON Orders.customer_id = Customers.user_id
-        WHERE Orders.id=?
-    ''', (order_id,))
-    order = cursor.fetchone()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-    if order and order['status'] == 'pending':
-        cursor.execute('''
-            UPDATE Orders
-            SET status = 'cancelled', cancelled_at = ?
-            WHERE id = ?
-        ''', (datetime.now().isoformat(), order_id))
-        conn.commit()
-        logger.debug(f"Order ID: {order_id} status updated to cancelled.")
+        cursor.execute(
+            "SELECT o.*, c.username FROM Orders o JOIN Customers c ON o.customer_id = c.user_id WHERE o.id=%s",
+            (order_id,)
+        )
+        order = cursor.fetchone()
 
-        await query.edit_message_text("Your order has been cancelled.")
-        logger.info(f"User {query.from_user.id} cancelled order ID: {order_id}")
+        if order and order['status'] == 'pending':
+            cursor.execute(
+                "UPDATE Orders SET status = 'cancelled', cancelled_at = %s WHERE id = %s",
+                (datetime.now(), order_id)
+            )
+            conn.commit()
+            logger.debug(f"Order ID: {order_id} status updated to cancelled.")
 
-        # Edit the original runner group message to indicate cancellation and remove the accept button
-        await context.bot.edit_message_text(
-            chat_id=RUNNER_GROUP_ID,
-            message_id=order['runner_message_id'],
-            text=(
+            await query.edit_message_text("Your order has been cancelled.")
+            logger.info(f"User {query.from_user.id} cancelled order ID: {order_id}")
+
+            # Edit runner group message
+            runner_message_text = (
                 f"Order #{order_id} has been cancelled by the user.\n\n"
                 f"Type  : {order['delivery_type'].capitalize()}\n"
                 f"From : {order['from_location']}\n"
                 f"To      : {order['to_location']}\n"
-                f"Time : {order['order_time']}\n"
-            ),
-            reply_markup=None
-        )
-    else:
-        await query.edit_message_text("This order cannot be cancelled.")
-        logger.warning(f"User {query.from_user.id} tried to cancel order ID: {order_id}, but it was not pending or not found.")
-    conn.close()
+                f"Time : {order['order_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
+            await context.bot.edit_message_text(
+                chat_id=RUNNER_GROUP_ID,
+                message_id=order['runner_message_id'],
+                text=runner_message_text,
+                reply_markup=None
+            )
+        else:
+            await query.edit_message_text("This order cannot be cancelled.")
+            logger.warning(f"User {query.from_user.id} failed to cancel order {order_id}.")
+    except Exception as e:
+        logger.error(f"Error during cancellation for order {order_id}: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
 # Handle when a runner accepts an order
 async def handle_runner_acceptance(update: Update, context: CallbackContext) -> None:
@@ -402,83 +390,83 @@ async def handle_runner_acceptance(update: Update, context: CallbackContext) -> 
     await query.answer()
     order_id = query.data.replace('accept_', '')
     runner = update.effective_user
-    logger.info(f"Runner {runner.id} (@{runner.username}) attempting to accept order ID: {order_id}")
+    logger.info(f"Runner {runner.id} (@{runner.username}) attempting to accept order {order_id}")
+    conn = None
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT Orders.*, Customers.username
-        FROM Orders
-        JOIN Customers ON Orders.customer_id = Customers.user_id
-        WHERE Orders.id=?
-    ''', (order_id,))
-    order = cursor.fetchone()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-    if order and order['status'] == 'pending':
-        # Update order status and runner details
-        cursor.execute('''
-            UPDATE Orders
-            SET status = 'accepted', runner_id = ?, accept_time = ?
-            WHERE id = ?
-        ''', (runner.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), order_id))
-        conn.commit()
-        logger.debug(f"Order ID: {order_id} status updated to accepted, runner_id={runner.id}")
+        # Use FOR UPDATE to lock the row and prevent race conditions
+        cursor.execute(
+            "SELECT o.*, c.username FROM Orders o JOIN Customers c ON o.customer_id = c.user_id WHERE o.id=%s FOR UPDATE",
+            (order_id,)
+        )
+        order = cursor.fetchone()
 
-        # Check if runner is already in the database
-        cursor.execute("SELECT * FROM Runners WHERE user_id=?", (runner.id,))
-        runner_record = cursor.fetchone()
-        if not runner_record:
-            cursor.execute("INSERT INTO Runners (user_id, username) VALUES (?, ?)", (runner.id, runner.username))
+        if order and order['status'] == 'pending':
+            # Update order status and runner details
+            cursor.execute(
+                "UPDATE Orders SET status = 'accepted', runner_id = %s, accept_time = %s WHERE id = %s",
+                (runner.id, datetime.now(), order_id)
+            )
+
+            # Upsert runner
+            cursor.execute(
+                "INSERT INTO Runners (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET username = %s",
+                (runner.id, runner.username, runner.username)
+            )
+            logger.debug(f"Runner upserted: user_id={runner.id}, username={runner.username}")
+
+            # Update runner group message
+            runner_message_text = (
+                f"#{order_id}\n\n"
+                f"Type  : {order['delivery_type'].capitalize()}\n"
+                f"From : {order['from_location']}\n"
+                f"To      : {order['to_location']}\n"
+                f"Time : {order['order_time'].strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"✅ Accepted by @{runner.username}"
+            )
+            await query.edit_message_text(runner_message_text, reply_markup=None)
+
+            # Notify customer
+            customer_message_text = (
+                f"✅ Accepted by @{runner.username}\n\n"
+                f"📋 Order Summary:\n"
+                f"Order ID: #{order_id}\n"
+                f"Delivery Type: {order['delivery_type'].capitalize()}\n"
+                f"From: {order['from_location']}\n"
+                f"To: {order['to_location']}\n"
+                f"Time: {order['order_time'].strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                "The order is now being processed."
+            )
+            await context.bot.send_message(chat_id=order['customer_id'], text=customer_message_text)
+
+            # Delete the previous message from the customer's chat
+            await context.bot.delete_message(chat_id=order['customer_id'], message_id=order['customer_message_id'])
+
+            # DM runner with customer details
+            await context.bot.send_message(
+                chat_id=runner.id,
+                text=f"You have accepted order #{order_id}.\nCustomer's username: @{order['username']}\nPlease contact them for details."
+            )
+
             conn.commit()
-        logger.debug(f"New runner inserted: user_id={runner.id}, username={runner.username}")
-
-        # Update runner group message
-        runner_message = (
-            f"#{order_id}\n\n"
-            f"Type  : {order['delivery_type'].capitalize()}\n"
-            f"From : {order['from_location']}\n"
-            f"To      : {order['to_location']}\n"
-            f"Time : {order['order_time']}\n\n"
-            f"✅ Accepted by @{runner.username}"
-        )
-        await query.edit_message_text(runner_message, reply_markup=None)
-
-        # Notify customer with a new message
-        await context.bot.send_message(
-            chat_id=order['customer_id'],
-            text=f"✅ Accepted by @{runner.username}\n\n"
-                 f"📋 Order Summary:\n"
-                 f"Order ID: #{order_id}\n"
-                 f"Delivery Type: {order['delivery_type'].capitalize()}\n"
-                 f"From: {order['from_location']}\n"
-                 f"To: {order['to_location']}\n"
-                 f"Time: {order['order_time']}\n\n"
-                 "The order is now being processed."
-        )
-
-        # Delete the previous message from the customer's chat
-        await context.bot.delete_message(
-            chat_id=order['customer_id'],
-            message_id=order['customer_message_id']
-        )
-
-        # Direct message the runner with customer's username or Telegram link
-        customer_username = order['username']
-        await context.bot.send_message(
-            chat_id=runner.id,
-            text=f"You have accepted the order #{order_id}.\n"
-                 f"Customer's username: @{customer_username}\n"
-                 f"Please contact the customer for further details."
-        )
-        logger.info(f"Runner {runner.id} (@{runner.username}) successfully accepted order ID: {order_id}")
-    else:
-        await query.edit_message_text(
-            f"{query.message.text}\n\n"
-            "❌ This order is no longer available.",
-            reply_markup=None
-        )
-        logger.warning(f"Runner {runner.id} (@{runner.username}) tried to accept order ID: {order_id}, but it was not pending or not found.")
-    conn.close()
+            logger.info(f"Runner {runner.id} successfully accepted order {order_id}")
+        else:
+            await query.edit_message_text(
+                f"{query.message.text}\n\n"
+                "❌ This order is no longer available.",
+                reply_markup=None
+            )
+            logger.warning(f"Runner {runner.id} failed to accept unavailable order {order_id}")
+    except Exception as e:
+        logger.error(f"Error during runner acceptance for order {order_id}: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
 
 # Cancel command handler
 async def cancel(update: Update, context: CallbackContext) -> int:
@@ -486,8 +474,8 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     logger.info(f"User {update.effective_user.id} cancelled order using /cancel command.")
     return ConversationHandler.END
 
-# Main function to set up and run the bot
-def main() -> None:
+def setup_bot() -> Application:
+    """Sets up the bot application and handlers."""
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Set up conversation handler
@@ -526,9 +514,4 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_runner_acceptance, pattern='^accept_'))
     application.add_handler(CallbackQueryHandler(handle_cancellation, pattern='^cancel_'))
 
-    # Start the bot
-    print("Bot is running...")
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
+    return application
