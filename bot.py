@@ -72,9 +72,6 @@ def get_next_counter():
     return counter["count"]
 
 # Start command handler
-import os
-import json
-
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = update.effective_user.id
     logger.info(f"User {user_id} started the bot.")
@@ -486,8 +483,9 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     logger.info(f"User {update.effective_user.id} cancelled order using /cancel command.")
     return ConversationHandler.END
 
-# Main function to set up and run the bot
-def main() -> None:
+# Function to set up and return the bot application
+def get_application() -> Application:
+    """Sets up and returns the Telegram bot application."""
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Set up conversation handler
@@ -526,9 +524,4 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_runner_acceptance, pattern='^accept_'))
     application.add_handler(CallbackQueryHandler(handle_cancellation, pattern='^cancel_'))
 
-    # Start the bot
-    print("Bot is running...")
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
+    return application
