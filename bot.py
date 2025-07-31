@@ -17,14 +17,6 @@ import logging
 
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("data/bot.log"),
-        logging.StreamHandler()
-    ]
-)
 logger = logging.getLogger(__name__) # Get logger instance
 logger.setLevel(logging.DEBUG) # Set logger level to DEBUG to capture debug logs as well
 
